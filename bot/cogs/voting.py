@@ -77,31 +77,42 @@ STR_VOTE_SENT = """
 Vote saved! Moving onto more projects...
 """
 
-EMOJIS = ["🔴","🟦","🟢","🟨","🟣","🟥","🔵","🟩","🟡","🟪"]
+EMOJIS = ["🔴", "🟦", "🟢", "🟨", "🟣", "🟥", "🔵", "🟩", "🟡", "🟪"]
 
 pending_tasks = dict()
 
 
 class Voting(commands.Cog):
     """Commands !"""
+
     def __init__(self, bot):
         self.bot = bot
         self._last_member = None
-        self.start_vote = 761769313270890537
+        self.start_vote = os.environ.get("VOTE_MESSAGE")
 
-    async def get_req(self, endpoint, params, data = None, error = ""):
+    async def get_req(self, endpoint, params, data=None, error=""):
         async with aiohttp.ClientSession() as session:
-            headers = {"Sunbot-Secret" : SECRET}
-            async with session.get(os.path.join(SERVER,endpoint), params = params, headers = headers, data = data) as resp:
+            headers = {"Sunbot-Secret": SECRET}
+            async with session.get(
+                os.path.join(SERVER, endpoint),
+                params=params,
+                headers=headers,
+                data=data,
+            ) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
                     return None
 
-    async def post_req(self, endpoint, params, data = None, error = ""):
+    async def post_req(self, endpoint, params, data=None, error=""):
         async with aiohttp.ClientSession() as session:
-            headers = {"Sunbot-Secret" : SECRET}
-            async with session.post(os.path.join(SERVER,endpoint), params = params, headers = headers, data = data) as resp:
+            headers = {"Sunbot-Secret": SECRET}
+            async with session.post(
+                os.path.join(SERVER, endpoint),
+                params=params,
+                headers=headers,
+                data=data,
+            ) as resp:
                 if resp.status == 201:
                     return await resp.json()
                 else:
@@ -111,23 +122,27 @@ class Voting(commands.Cog):
         msg = await member.send(message)
         for i in emojis:
             await msg.add_reaction(i)
+
         def check(reaction, user):
             return member == user and reaction.emoji in emojis
+
         if member.id in pending_tasks:
             pending_tasks[member.id].close()
-        pending_tasks[member.id] = self.bot.wait_for(event = "reaction_add", check = check)
+        pending_tasks[member.id] = self.bot.wait_for(event="reaction_add", check=check)
         reaction, user = await pending_tasks[member.id]
         for i in emojis:
-            await msg.remove_reaction(i,self.bot.user)
+            await msg.remove_reaction(i, self.bot.user)
         return reaction.emoji
 
     async def send_msg_req(self, member, message):
         msg = await member.send(message)
+
         def check(msg):
             return member == msg.author
+
         if member.id in pending_tasks:
             pending_tasks[member.id].close()
-        pending_tasks[member.id] = self.bot.wait_for(event = "message", check = check)
+        pending_tasks[member.id] = self.bot.wait_for(event="message", check=check)
         message = await pending_tasks[member.id]
         return message.content
 
@@ -137,24 +152,28 @@ class Voting(commands.Cog):
             if payload.emoji.name == "🗳️":
                 member = payload.member
                 # Check if hacker checked in!
-                res = await self.get_req("discord/verified",{"id" : member.id})
-                if res['verified'] == "False":
+                res = await self.get_req("discord/verified", {"id": member.id})
+                if res["verified"] == "False":
                     await member.send(STR_UNVERIFIED)
                     return False
                 # Send opening message!
-                react = await self.send_react_req(member, STR_OPENING, ["👍","👎"])
+                react = await self.send_react_req(member, STR_OPENING, ["👍", "👎"])
                 # If they have a table get their table number
                 if react == "👍":
                     table = int(await self.send_msg_req(member, STR_TABLE))
-                    res = await self.post_req("discord/startvote",{"id": member.id, "table": table})
+                    res = await self.post_req(
+                        "discord/startvote", {"id": member.id, "table": table}
+                    )
                     # Loop if table was invalid
                     while res == None:
                         table = int(await self.send_msg_req(member, STR_TABLE_INVALID))
-                        res = await self.post_req("discord/startvote",{"id": member.id, "table": table})
+                        res = await self.post_req(
+                            "discord/startvote", {"id": member.id, "table": table}
+                        )
                     await member.send(STRF_TABLE_FOUND.format(res))
                 # Just send the hacker's ID over
                 else:
-                    res = await self.post_req("discord/startvote",{"id": member.id})
+                    res = await self.post_req("discord/startvote", {"id": member.id})
                     if res == None:
                         await member.send(STR_DB_ERROR)
                         return False
@@ -183,47 +202,49 @@ class Voting(commands.Cog):
                         round += 1
 
     async def vote(self, member, prev_proj, next_proj):
-        emoji = await self.send_react_req(member, STRF_VOTE.format(prev_proj, next_proj), emojis = [prev_proj["emoji"], next_proj["emoji"]])
+        emoji = await self.send_react_req(
+            member,
+            STRF_VOTE.format(prev_proj, next_proj),
+            emojis=[prev_proj["emoji"], next_proj["emoji"]],
+        )
         params = {
-            "id" : member.id,
+            "id": member.id,
             "next_table": next_proj["table"],
             "prev_table": prev_proj["table"],
-            "next_won": str(emoji == next_proj["emoji"])
+            "next_won": str(emoji == next_proj["emoji"]),
         }
-        res = await self.post_req("discord/voteproj", params = params)
+        res = await self.post_req("discord/voteproj", params=params)
         if res == None:
             await member.send(STR_DB_ERROR)
             raise Exception("Unable to store data")
         await member.send(STR_VOTE_SENT)
 
     async def get_project(self, member, round):
-        res = await self.get_req("discord/nextproj",{"id" : member.id})
+        res = await self.get_req("discord/nextproj", {"id": member.id})
         if res["table"] == None:
             return None
         res["emoji"] = EMOJIS[round % len(EMOJIS)]
         return res
 
     async def review_project(self, member, proj):
-        params = {
-            "id" : member.id,
-            "table" : proj["table"]
-        }
+        params = {"id": member.id, "table": proj["table"]}
         await member.send(STRF_PROJECT.format(proj))
         emoji = await self.send_react_req(member, STR_REVIEW_PROJ, ["➡️"])
-        if False: #emoji = "🚩":
+        if False:  # emoji = "🚩":
             report = await self.send_msg_req(member, STRF_FLAG_PROJ.format(proj))
-            res = await self.post_req("discord/flagproj", params = params, data = report)
+            res = await self.post_req("discord/flagproj", params=params, data=report)
             if res == None:
                 await member.send(STR_DB_ERROR)
                 raise Exception("Unable to store data")
             await member.send(STR_FLAG_SENT)
             return False
         else:
-            res = await self.post_req("discord/viewproj", params = params)
+            res = await self.post_req("discord/viewproj", params=params)
             if res == None:
                 await member.send(STR_DB_ERROR)
                 raise Exception("Unable to store data")
             return True
+
 
 def setup(bot):
     bot.add_cog(Voting(bot))
